@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import division
 import numpy as np
 import rospy
@@ -12,25 +12,25 @@ class MPC():
 	def __init__(self,):
 		self.PubTwist = rospy.Publisher('/cmd_vel1', Twist, queue_size = 1)
 		self.pub_marker = rospy.Publisher('/poses', Pose, queue_size=1)
+		# self.data =  np.loadtxt('/home/pradheep/fab_ws/src/path_following_ctrl/paths/data1.txt', delimiter = ' ')
 		self.data = []
 		self.SubGoalPath = rospy.Subscriber("/move_base/NavfnROS/plan", Path, self.CBglobplan)
-		# Define the vechile - for now giving a rough estimate for the MPO-700
 		self.vehicle = Holonomic3D(Plate(Rectangle(0.5, 1.), height=0.1), bounds={'vmax': 0.4, 'wmax': np.pi/3., 'wmin': -np.pi/3.})
 		self.current_state = Pose()
 		self.current_velocity = Twist()
 		# create environment
 		print('Using environment for known example')
 		#for now fix environment to the one for which A*-path is known
+		start = [0,0,0]
+		goal = [1,0,0]
 		self.vehicle.set_initial_conditions(start)
 		self.vehicle.set_terminal_conditions(goal)
 		self.pub_pred_velocity = Twist()
-		# Defining the robot's environment
 		self.environment = Environment(room={'shape': Cube(20.)})
 		self.current_states = [0, 0, 0]
 		self.current_time = 0
 		self.update_time = 0.01
 		self.sample_time = 0.01
-		# Defining the problem as a point to point problem 
 		self.problem = Point2point(self.vehicle, self.environment, freeT=False)
 		self.problem.init()
 		self.deployer = Deployer(self.problem, self.sample_time, self.update_time)
@@ -39,7 +39,6 @@ class MPC():
 		self.SubOdom = rospy.Subscriber('/odom', Odometry, self.CBodom)
 		self.ind = 15
 		self.waypoint_init = [0,0,0]
-		# Setting the constraints
 		self.problem.set_options({'hard_term_con': False, 'horizon_time': 3.})
 		self.tolerance_x = 0.05
 		self.tolerance_y = 0.05
@@ -49,10 +48,10 @@ class MPC():
 		self.last_pose =  [0,0]
 		self.PubPath = rospy.Publisher("Eval_path", Path, queue_size = 1)
 		self.last_dist = 0
+		self.time2 = []
 		self.incr = 0
 
 	def CBglobplan(self,planner_data):
-		# Subscribe the global plan for the robot to follow the path
 		waypoints_pos_x = []
 		waypoints_pos_y = []
 		waypoints_pos_z = []
@@ -78,7 +77,6 @@ class MPC():
 			self.PubPath.publish(self.Path)
 
 	def CBodom(self,data):
-		# Subscribe the odom data for calculating the feedback, this needs to use the map data while using it on the real robot
 		self.current_state.position.x = data.pose.pose.position.x
 		self.current_state.position.y = data.pose.pose.position.y
 		self.current_state.position.z = data.pose.pose.position.z
@@ -99,7 +97,6 @@ class MPC():
 		self.theta_use = theta[2]
 
 	def get_incr_ind(self, last_pose):
-		# Helper function to update the target waypoints
 		curr_pos = np.array((self.current_state.position.x, self.current_state.position.y))
 		last_pose = np.asarray(last_pose)
 		dist_travelled = np.linalg.norm(curr_pos - last_pose)
@@ -116,24 +113,18 @@ class MPC():
 			else:
 				waypoint = [self.data[:,0][self.len_data-1],self.data[:,1][self.len_data-1],0]
 				Flag1 = 1
-			
-			# Set the condition for the optimization
 			self.vehicle.set_initial_conditions(self.waypoint_init)
 			self.vehicle.set_terminal_conditions(waypoint)
 			t0 = time.time() - self.t00
 			
 			if (t0-self.current_time-self.update_time) >= 0.:
 				self.current_time = t0
-
-
 			trajectories = self.deployer.update(self.current_time, self.current_states)
-			# print(trajectories[])
 			self.pub_pred_velocity.linear.x = trajectories['input'][0, :][0]
 			self.pub_pred_velocity.linear.y = trajectories['input'][1, :][0]
 			self.pub_pred_velocity.angular.z = 0
 			self.PubTwist.publish(self.pub_pred_velocity)
 
-			# Move the local target defined based on the pure pursuit controller
 			self.d_trav = self.get_incr_ind(self.last_pose)
 
 			dist = self.d_trav+self.last_dist
@@ -148,7 +139,6 @@ class MPC():
 			self.incr += incr
 			self.ind = self.ind + int(incr)
 
-			# Save the last pose for moving the local target
 			self.last_pose = [self.current_state.position.x, self.current_state.position.y]
 
 			if(incr>0):
@@ -167,7 +157,6 @@ class MPC():
 				self.ind = 23
 				self.cost = 0
 				self.data = []
-				# Reset the deployer once the robot has a reached a particular local target, so that waypoints can be updated
 				self.deployer.reset()
 
 			self.waypoint_init = waypoint
@@ -183,6 +172,5 @@ def main():
 	while not rospy.is_shutdown():
 		ctrl.update()
 	rospy.loginfo("Finishing")
-	
 if __name__ == '__main__':
 	main()
